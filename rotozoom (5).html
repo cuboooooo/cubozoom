@@ -1,0 +1,788 @@
+<!-- i have since moved to vscode and its on github. -->
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Rotozoom</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+
+  <style>
+    /* ---------- tokens ---------- */
+    :root {
+      --bg: #0e0c14;
+      --panel: rgba(20, 16, 32, 0.82);
+      --ink: #f2eefb;
+      --dim: #a79fbd;
+      --line: #3a3150;
+      --hot: #ff3d9a;
+
+      /* keep stuff clear of phone notches / home bars */
+      box-sizing: border-box;
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    /* It's a dark demo-scene toy, so dark in every theme. */
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) { --bg: #0e0c14; }
+    }
+    :root[data-theme="dark"] { --bg: #0e0c14; }
+
+    /* ---------- page ---------- */
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.4 'Bricolage Grotesque', system-ui, sans-serif;
+    }
+
+    canvas {
+      display: block;
+      position: fixed;
+      inset: 0;
+      touch-action: none;   /* so dragging pans instead of scrolling on touch screens */
+      z-index: 0;   /* p5 adds the canvas AFTER our panel, so without this it paints on top */
+    }
+
+    /* ---------- control panel ---------- */
+    #panel {
+      position: fixed;
+      z-index: 10;
+      left: 12px;
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      width: min(310px, calc(100% - 24px));
+      max-height: 70vh;
+      overflow-y: auto;
+      padding: 10px 12px;
+      background: var(--panel);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    #bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    #hint {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: var(--dim);
+    }
+
+    /* the little "bring the panel back" button */
+    #show {
+      position: fixed;
+      z-index: 10;
+      left: 12px;
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      display: none;
+      background: var(--hot);
+      color: #16001a;
+    }
+
+    details {
+      padding: 6px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    summary {
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 92px 1fr 68px;
+      align-items: center;
+      gap: 8px;
+      margin: 5px 0;
+      color: var(--dim);
+    }
+
+    /* the typed-value box next to each slider: no limits, slider caps but this doesn't */
+    .num {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 3px 5px;
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      font: inherit;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .chk {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+    }
+
+    /* ---------- buttons & inputs ---------- */
+    button,
+    label.btn {
+      padding: 6px 10px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--hot);
+      color: #16001a;
+      font: 600 13px 'Bricolage Grotesque', system-ui, sans-serif;
+      cursor: pointer;
+    }
+
+    button.ghost {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+
+    select {
+      width: 100%;
+      margin-top: 6px;
+      padding: 6px;
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font: inherit;
+    }
+
+    select option { background: #1b1630; color: var(--ink); }
+
+    /* hide the ugly native file input, the label acts as the button */
+    #file {
+      position: absolute;
+      width: 0;
+      height: 0;
+      opacity: 0;
+    }
+
+    input[type=range],
+    input[type=checkbox] {
+      accent-color: var(--hot);
+    }
+
+    input[type=range] { width: 100%; }
+
+    button:focus-visible,
+    input:focus-visible,
+    summary:focus-visible,
+    label.btn:focus-within {
+      outline: 2px solid var(--hot);
+      outline-offset: 2px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- shown only while the panel is hidden -->
+  <button id="show">Show controls</button>
+
+  <div id="panel">
+    <div id="bar">
+      <label class="btn">Load PNG
+        <input id="file" type="file" accept="image/png,image/*">
+      </label>
+      <button id="reset" class="ghost">Default texture</button>
+      <button id="hide" class="ghost">Hide</button>
+    </div>
+    <select id="preset" aria-label="Preset textures"></select>
+    <div class="chk" style="gap:6px; flex-wrap:wrap; margin:6px 0 0">
+      <button id="scan" class="ghost">Scan folder…</button>
+      <button id="saveJson" class="ghost">Download assets.json</button>
+    </div>
+    <p id="hint">Or drop an image anywhere. Press H to hide or show this panel. Presets load from the assets folder on run; the third value in assets.json sets whether Pixelated gets ticked.</p>
+
+    <details open>
+      <summary>Rotate</summary>
+      <div class="chk"><input type="checkbox" id="rotAuto" checked><label for="rotAuto">Spin</label></div>
+      <div class="row"><span>Speed</span><input type="range" id="rotSpeed" min="-3" max="3" step="0.01" value="0.6"><input type="number" class="num" id="rotSpeedN" step="any" value="0.6" aria-label="rotSpeed value"></div>
+      <div class="row"><span>Angle °</span><input type="range" id="rotAngle" min="-180" max="180" step="1" value="0"><input type="number" class="num" id="rotAngleN" step="any" value="0" aria-label="rotAngle value"></div>
+      <div class="chk"><input type="checkbox" id="drift" checked><label for="drift">Drift (scroll the texture)</label></div>
+    </details>
+
+    <details open>
+      <summary>Zoom</summary>
+      <div class="chk"><input type="checkbox" id="zoomAuto" checked><label for="zoomAuto">Pulse</label></div>
+      <div class="row"><span>Tiles high</span><input type="range" id="zoomLevel" min="0.5" max="16" step="0.1" value="3"><input type="number" class="num" id="zoomLevelN" step="any" value="3" aria-label="zoomLevel value"></div>
+      <div class="row"><span>Depth</span><input type="range" id="zoomDepth" min="0" max="2" step="0.01" value="0.8"><input type="number" class="num" id="zoomDepthN" step="any" value="0.8" aria-label="zoomDepth value"></div>
+      <div class="row"><span>Speed</span><input type="range" id="zoomSpeed" min="0" max="3" step="0.01" value="0.8"><input type="number" class="num" id="zoomSpeedN" step="any" value="0.8" aria-label="zoomSpeed value"></div>
+    </details>
+
+    <details open>
+      <summary>Tilt (perspective)</summary>
+      <div class="chk"><input type="checkbox" id="tiltAuto"><label for="tiltAuto">Sway</label></div>
+      <div class="row"><span>Tilt X °</span><input type="range" id="tiltX" min="-60" max="60" step="1" value="0"><input type="number" class="num" id="tiltXN" step="any" value="0" aria-label="tiltX value"></div>
+      <div class="row"><span>Tilt Y °</span><input type="range" id="tiltY" min="-60" max="60" step="1" value="0"><input type="number" class="num" id="tiltYN" step="any" value="0" aria-label="tiltY value"></div>
+      <div class="row"><span>Sway °</span><input type="range" id="swayAmt" min="0" max="60" step="1" value="25"><input type="number" class="num" id="swayAmtN" step="any" value="25" aria-label="swayAmt value"></div>
+      <div class="row"><span>Sway speed</span><input type="range" id="swaySpeed" min="0" max="3" step="0.01" value="0.7"><input type="number" class="num" id="swaySpeedN" step="any" value="0.7" aria-label="swaySpeed value"></div>
+    </details>
+
+    <details open>
+      <summary>Pan</summary>
+      <div class="chk"><input type="checkbox" id="grab"><label for="grab">Grab to pan, throw and catch</label></div>
+      <div class="row"><span>Friction</span><input type="range" id="friction" min="0" max="10" step="0.1" value="2"><input type="number" class="num" id="frictionN" step="any" value="2" aria-label="friction value"></div>
+      <button id="resetPan" class="ghost">Reset pan</button>
+    </details>
+
+    <details>
+      <summary>Texture</summary>
+      <div class="chk"><input type="checkbox" id="pixel"><label for="pixel">Pixelated (nearest-neighbour)</label></div>
+      <div class="chk"><input type="checkbox" id="mip" checked><label for="mip">Mipmaps (less shimmer when zoomed out)</label></div>
+    </details>
+  </div>
+
+  <script>
+    // tiny helper so we're not typing document.getElementById all day
+    const $ = id => document.getElementById(id);
+
+    // ------------------------------------------------------------------
+    // Shaders. The vertex shader just places the plane in 3D (so tilt and
+    // perspective come for free). The fragment shader is the actual
+    // rotozoom: rotate + scale + scroll the UVs, then wrap with fract().
+    // ------------------------------------------------------------------
+    const VERT = `
+      precision highp float;
+      attribute vec3 aPosition;
+      attribute vec2 aTexCoord;
+      uniform mat4 uModelViewMatrix, uProjectionMatrix;
+      varying vec2 vUv;
+
+      void main() {
+        vUv = aTexCoord;
+        gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+      }`;
+
+    const FRAG = `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D uTex;
+      uniform float uAngle, uScale, uAspect, uTexAspect, uF;
+      uniform vec2 uPan, uTilt;   // uTilt = (x, y) tilt in radians
+
+      void main() {
+        // centre the UVs and fix the aspect ratio
+        vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
+
+        // --- the tilt ---
+        // Instead of rotating a finite 3D plane (which has edges), we shoot a
+        // ray from a virtual camera through every pixel and see where it hits
+        // an ENDLESS tilted plane. Same perspective as real 3D, no edges.
+        vec3 ray = vec3(q.x, -q.y, -uF);
+
+        float cx = cos(uTilt.x), sx = sin(uTilt.x);
+        float cy = cos(uTilt.y), sy = sin(uTilt.y);
+        mat3 rx = mat3(1.0, 0.0, 0.0,   0.0, cx, sx,   0.0, -sx, cx);
+        mat3 ry = mat3(cy, 0.0, -sy,    0.0, 1.0, 0.0,  sy, 0.0, cy);
+        mat3 rot = rx * ry;
+
+        // The inverse of a rotation is its transpose. transpose() doesn't exist
+        // in the GLSL version p5 uses for this shader, so we spell it out.
+        mat3 rxT = mat3(1.0, 0.0, 0.0,   0.0, cx, -sx,  0.0, sx, cx);
+        mat3 ryT = mat3(cy, 0.0, sy,     0.0, 1.0, 0.0, -sy, 0.0, cy);
+        mat3 rotInv = ryT * rxT;
+
+        vec3 n = rot * vec3(0.0, 0.0, 1.0);     // plane normal
+        vec3 centre = vec3(0.0, 0.0, -1.0);     // plane sits 1 unit in front of the camera
+
+        // Ray/plane intersection. The min() is a safety net: if a ray would
+        // skim past the horizon, we stretch the texture there instead of
+        // ever showing background.
+        float d = min(dot(ray, n), -0.05);
+        float t = -n.z / d;
+        vec3 local = rotInv * (t * ray - centre);
+
+        // back to texture-ish units (at zero tilt this equals q) and zoom
+        vec2 p = vec2(local.x, -local.y) * uF * uScale;
+
+        // the "roto" part: spin it around the middle
+        float c = cos(uAngle), s = sin(uAngle);
+        p = mat2(c, -s, s, c) * p + uPan;
+
+        // keep non-square PNGs from getting squished
+        p.x /= uTexAspect;
+
+        // the texture is set to REPEAT wrapping, so any p tiles forever.
+        // (We avoid fract() here because its jump confuses mipmap selection
+        // and draws thin seam lines.)
+        gl_FragColor = vec4(texture2D(uTex, p).rgb, 1.0);
+      }`;
+
+    // ------------------------------------------------------------------
+    // State
+    // ------------------------------------------------------------------
+    let sh;                  // the shader
+    let tex;                 // texture currently in use
+    let defaultTex;          // the built-in one, so we can switch back
+    let texAspect = 1;       // width / height of the texture
+
+    // Each effect has its own phase so toggling one off doesn't make
+    // the others jump around.
+    let rotPhase = 0;
+    let zoomPhase = 0;
+    let tiltPhase = 0;
+    let driftPhase = 0;
+
+    let panelVisible = true;
+
+    const FOV = 50 * Math.PI / 180;   // vertical field of view of the virtual camera
+    const FOCAL = 0.5 / Math.tan(FOV / 2);
+
+    // ------------------------------------------------------------------
+    // PRESETS: textures in the "assets" folder.
+    // On run we fetch assets/assets.json AND peek at the folder listing
+    // (most local dev servers show one), so new PNGs appear by themselves.
+    // You can also list some by hand here as [name, file, pixelated]:
+    //   ['Plasma', 'plasma.png', false]
+    // The third value decides if "Pixelated" gets ticked when you pick it.
+    // "Scan folder…" (Chrome/Edge) rebuilds assets.json for you.
+    // ------------------------------------------------------------------
+    const PRESETS = [
+      // ['Plasma', 'plasma.png', false],
+      ['Blackstone', 'blackstone.png', true],
+      ['Cobblestone', 'cobblestone.png', false],
+      ['Crying Obsidian', 'crying_obsidian.png', true],
+      ['Chiseled Copper', 'chiseled_copper.png', true],
+      ['Blackstone', 'blackstone.png', true],
+      ['Blackstone', 'blackstone.png', true],
+      ['Blackstone', 'blackstone.png', true],
+      
+    ];
+    const IMG_RE = /\.(png|jpe?g|gif|webp)$/i;
+    let presets = [];   // the final merged list
+
+    let presetByFile = {};   // file path -> its PRESETS entry, so we can read per-preset options
+    let userPan = [0, 0];   // what you've dragged around, in texture space
+    let view = null;        // this frame's camera settings, saved for pan maths
+    let dragging = false;
+    let lastPointer = [0, 0];
+    let panVel = [0, 0];    // throw velocity in texture units per second
+    let lastMoveT = 0;      // when the pointer last moved (ms)
+
+    // ------------------------------------------------------------------
+    // Textures
+    // ------------------------------------------------------------------
+
+    // Old-school XOR pattern on a checkerboard. Cheap, loud, perfect.
+    function makeDefaultTexture() {
+      const g = createGraphics(256, 256);
+      g.pixelDensity(1);
+      g.loadPixels();
+
+      for (let y = 0; y < 256; y++) {
+        for (let x = 0; x < 256; x++) {
+          const i = 4 * (y * 256 + x);
+          const checker = ((x >> 5) + (y >> 5)) & 1;
+          const xor1 = (x ^ y) & 255;
+          const xor2 = ((x * 2) ^ (y * 2)) & 255;
+
+          let r = checker ? xor1 : 255 - xor1;
+          let gr = xor2 * 0.6;
+          let b = checker ? 255 - xor2 : xor2;
+
+          // thin white line on the top/left so you can see where a tile ends
+          if (x < 2 || y < 2) { r = gr = b = 255; }
+
+          g.pixels[i] = r;
+          g.pixels[i + 1] = gr;
+          g.pixels[i + 2] = b;
+          g.pixels[i + 3] = 255;
+        }
+      }
+      g.updatePixels();
+      return g.get();   // freeze into a plain image so p5 doesn't re-upload it every frame
+    }
+
+    function setTexture(t) {
+      tex = t;
+      texAspect = t.width / t.height;
+      applyFilter();
+    }
+
+    // Texture filtering. We talk to WebGL directly here because p5 doesn't
+    // expose mipmaps: pixelated vs smooth, mipmaps on/off, and REPEAT wrapping.
+    function applyFilter() {
+      try {
+        const gl = drawingContext;
+        const t = p5.instance._renderer.getTexture(tex);
+        const nearest = $('pixel').checked;
+        const mip = $('mip').checked;
+
+        const mag = nearest ? gl.NEAREST : gl.LINEAR;
+        const min = mip ? (nearest ? gl.NEAREST_MIPMAP_NEAREST : gl.LINEAR_MIPMAP_LINEAR) : mag;
+
+        gl.bindTexture(gl.TEXTURE_2D, t.glTex);
+        if (mip) gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, min);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, mag);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+
+        // anisotropic filtering keeps tilted textures sharp, if the GPU has it
+        const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+        if (aniso) {
+          const amount = (mip && !nearest) ? Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 1;
+          gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, amount);
+        }
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      } catch (e) {
+        console.warn('Could not change texture filtering:', e);
+      }
+    }
+
+    // Accept [name, file, pixelated], a plain path, or { name, file, pixelated }
+    function normPreset(p) {
+      let name, file, pixelated = false;
+      if (Array.isArray(p)) [name, file, pixelated] = p;
+      else if (typeof p === 'string') file = p;
+      else ({ name, file, pixelated } = p);
+
+      if (!name) name = file.split('/').pop().replace(/\.[^.]+$/, '');
+      return {
+        name,
+        file: file.split('/').pop(),
+        pixelated: !!pixelated,
+        url: file.includes('/') ? file : 'assets/' + file
+      };
+    }
+
+    function addPreset(list, p) {
+      if (!list.some(q => q.file === p.file)) list.push(p);
+    }
+
+    // the "assets.json" text: [name without extension, name with extension, pixelated]
+    function presetsToJson() {
+      return JSON.stringify(presets.map(p => [p.name, p.file, p.pixelated]), null, 2);
+    }
+
+    function buildPresetMenu() {
+      const sel = $('preset');
+      sel.innerHTML = '<option value="">Built-in XOR pattern</option><option value="custom" hidden>Your file</option>';
+      presets.forEach((p, i) => sel.add(new Option(p.name, String(i))));
+    }
+
+    // Runs on startup: manifest first, then whatever the folder listing shows.
+    async function initPresets() {
+      const list = PRESETS.map(normPreset);
+
+      try {
+        const res = await fetch('assets/assets.json');
+        if (res.ok) (await res.json()).forEach(p => addPreset(list, normPreset(p)));
+      } catch (e) { /* no manifest, that's fine */ }
+
+      try {
+        const res = await fetch('assets/');
+        if ((res.headers.get('content-type') || '').includes('html')) {
+          const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+          doc.querySelectorAll('a[href]').forEach(a => {
+            const file = decodeURIComponent(a.getAttribute('href').split(/[?#]/)[0]).split('/').pop();
+            if (IMG_RE.test(file)) addPreset(list, normPreset(file));   // new files default to pixelated: false
+          });
+        }
+      } catch (e) { /* no folder listing, that's fine too */ }
+
+      presets = list;
+      buildPresetMenu();
+      if (presets.length) console.info('Generated assets.json:\n' + presetsToJson());
+
+      $('preset').onchange = () => {
+        const v = $('preset').value;
+        if (v === '') { setTexture(defaultTex); return; }
+        if (v === 'custom') return;
+
+        const p = presets[+v];
+        $('pixel').checked = p.pixelated;   // each preset picks its own filtering
+        loadImage(p.url, img => setTexture(img),
+          () => alert('Could not load ' + p.url + '. Is it in your assets folder?'));
+      };
+
+      $('saveJson').onclick = () => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([presetsToJson()], { type: 'application/json' }));
+        a.download = 'assets.json';
+        a.click();
+      };
+
+      // Browsers can't list a folder on their own, but Chrome/Edge let you pick one.
+      if (!window.showDirectoryPicker) $('scan').style.display = 'none';
+      $('scan').onclick = scanFolder;
+    }
+
+    // Pick your assets folder: we read every image, keep any pixelated flags
+    // from an existing assets.json, then WRITE a fresh assets.json into it.
+    async function scanFolder() {
+      try {
+        const dir = await showDirectoryPicker({ mode: 'readwrite' });
+        let old = [];
+        const files = [];
+
+        for await (const [name, handle] of dir.entries()) {
+          if (handle.kind !== 'file') continue;
+          if (name.toLowerCase() === 'assets.json') {
+            try { old = JSON.parse(await (await handle.getFile()).text()).map(normPreset); } catch (e) {}
+          } else if (IMG_RE.test(name)) {
+            files.push({ name, blob: URL.createObjectURL(await handle.getFile()) });
+          }
+        }
+
+        presets = files.sort((a, b) => a.name.localeCompare(b.name)).map(f => {
+          const p = normPreset(f.name);
+          p.pixelated = (old.find(o => o.file === p.file) || {}).pixelated || false;
+          p.url = f.blob;   // load straight from the picked folder this session
+          return p;
+        });
+
+        const out = await (await dir.getFileHandle('assets.json', { create: true })).createWritable();
+        await out.write(presetsToJson());
+        await out.close();
+
+        buildPresetMenu();
+      } catch (e) {
+        if (e.name !== 'AbortError') alert('Could not scan that folder (' + e.message + '). Try "Download assets.json" instead.');
+      }
+    }
+
+    // Where on the texture is this screen pixel? Same maths as the fragment
+    // shader (tilt ray-cast, zoom, rotate), minus pan. Used to pan accurately.
+    function screenToTexture(x, y) {
+      const { angle, scale, aspect, ax, ay } = view;
+      const cx = Math.cos(ax), sx = Math.sin(ax), cy = Math.cos(ay), sy = Math.sin(ay);
+
+      const qx = (x / width - 0.5) * aspect;
+      const qy = y / height - 0.5;
+      const ray = [qx, -qy, -FOCAL];
+      const n = [sy, -sx * cy, cx * cy];                      // plane normal
+
+      const d = Math.min(ray[0] * n[0] + ray[1] * n[1] + ray[2] * n[2], -0.05);
+      const t = -n[2] / d;
+      const w = [t * ray[0], t * ray[1], t * ray[2] + 1];     // hit point minus plane centre
+
+      const a = [w[0], cx * w[1] + sx * w[2], -sx * w[1] + cx * w[2]];   // undo X tilt
+      const lx = cy * a[0] - sy * a[2];                                  // undo Y tilt
+      const ly = a[1];
+
+      const px = lx * FOCAL * scale;
+      const py = -ly * FOCAL * scale;
+      const c = Math.cos(angle), s = Math.sin(angle);
+      return [c * px + s * py, -s * px + c * py];
+    }
+
+    function loadFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+
+      const url = URL.createObjectURL(file);
+      loadImage(
+        url,
+        img => { setTexture(img); $('preset').value = 'custom'; },
+        () => alert('That file could not be read as an image.')
+      );
+    }
+
+    // ------------------------------------------------------------------
+    // Panel show/hide. One function with an explicit on/off, so the
+    // button and the H key can never get out of sync.
+    // ------------------------------------------------------------------
+    function showPanel(visible) {
+      panelVisible = visible;
+      $('panel').style.display = visible ? '' : 'none';
+      $('show').style.display = visible ? 'none' : 'block';
+    }
+
+    // ------------------------------------------------------------------
+    // p5 lifecycle
+    // ------------------------------------------------------------------
+    function setup() {
+      createCanvas(windowWidth, windowHeight, WEBGL);
+      pixelDensity(1);   // retina would just burn GPU for no reason here
+      noStroke();
+
+      sh = createShader(VERT, FRAG);
+      defaultTex = makeDefaultTexture();
+      // replace this.
+      setTexture(defaultTex);
+
+      // sliders and number boxes stay in sync. You can type ANY number: the
+      // slider just pins to its end, but the typed value is what gets used.
+      document.querySelectorAll('.row').forEach(row => {
+        const range = row.querySelector('input[type=range]');
+        const num = row.querySelector('input[type=number]');
+        const decimals = (range.step.split('.')[1] || '').length;
+
+        range.addEventListener('input', () => { num.value = (+range.value).toFixed(decimals); });
+        num.addEventListener('input', () => {
+          if (num.value !== '' && !isNaN(num.value)) range.value = num.value;
+        });
+        num.value = (+range.value).toFixed(decimals);
+      });
+
+      // texture loading: button + drag and drop
+      $('file').addEventListener('change', e => loadFile(e.target.files[0]));
+      $('reset').onclick = () => setTexture(defaultTex);
+      $('pixel').onchange = applyFilter;
+      $('mip').onchange = applyFilter;
+      initPresets();
+
+      // grab-to-pan: drag on the canvas and the texture sticks to your pointer,
+      // even when it's rotated, zoomed or tilted
+      const canvasEl = document.querySelector('canvas');
+      const updateCursor = () => { canvasEl.style.cursor = $('grab').checked ? 'grab' : ''; };
+      $('grab').onchange = updateCursor;
+      $('resetPan').onclick = () => { userPan = [0, 0]; panVel = [0, 0]; };
+
+      window.addEventListener('pointerdown', e => {
+        if (!$('grab').checked || e.target !== canvasEl || !view) return;
+        dragging = true;
+        panVel = [0, 0];                  // grabbing it again = catch!
+        lastPointer = [e.clientX, e.clientY];
+        lastMoveT = e.timeStamp;
+        canvasEl.style.cursor = 'grabbing';
+      });
+
+      window.addEventListener('pointermove', e => {
+        if (!dragging) return;
+        // where was the texture under the pointer before vs now? shift by the difference
+        const before = screenToTexture(lastPointer[0], lastPointer[1]);
+        const now = screenToTexture(e.clientX, e.clientY);
+        const dx = before[0] - now[0];
+        const dy = before[1] - now[1];
+        userPan[0] += dx;
+        userPan[1] += dy;
+
+        // estimate how fast we're dragging (smoothed so it isn't jittery)
+        const dt = Math.max(e.timeStamp - lastMoveT, 4) / 1000;
+        panVel[0] = panVel[0] * 0.4 + (dx / dt) * 0.6;
+        panVel[1] = panVel[1] * 0.4 + (dy / dt) * 0.6;
+
+        lastPointer = [e.clientX, e.clientY];
+        lastMoveT = e.timeStamp;
+      });
+
+      const stopDrag = e => {
+        // if you paused before letting go, it's a drop, not a throw
+        if (dragging && e.timeStamp - lastMoveT > 100) panVel = [0, 0];
+
+        // speed limit so a wild flick doesn't launch it into orbit
+        const speed = Math.hypot(panVel[0], panVel[1]);
+        const maxSpeed = 60;
+        if (speed > maxSpeed) panVel = panVel.map(v => (v / speed) * maxSpeed);
+
+        dragging = false;
+        updateCursor();
+      };
+      window.addEventListener('pointerup', stopDrag);
+      window.addEventListener('pointercancel', stopDrag);
+      window.addEventListener('dragover', e => e.preventDefault());
+      window.addEventListener('drop', e => {
+        e.preventDefault();
+        loadFile(e.dataTransfer.files[0]);
+      });
+
+      // panel toggling
+      $('hide').onclick = () => showPanel(false);
+      $('show').onclick = () => showPanel(true);
+
+      window.addEventListener('keydown', e => {
+        if (e.repeat || e.target.type === 'number') return;   // holding H shouldn't strobe the panel
+        if (e.code === 'KeyH') showPanel(!panelVisible);
+      });
+
+      // make sure the page has keyboard focus (matters when embedded in an iframe)
+      window.addEventListener('pointerdown', () => window.focus());
+      window.focus();
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+
+    function draw() {
+      // clamp dt so alt-tabbing doesn't make everything lurch
+      const dt = Math.min(deltaTime, 100) / 1000;
+      const val = id => {
+        const typed = parseFloat($(id + 'N').value);
+        return Number.isNaN(typed) ? +$(id).value : typed;
+      };
+
+      // advance whichever effects are switched on
+      if ($('rotAuto').checked)  rotPhase  += dt * val('rotSpeed');
+      if ($('zoomAuto').checked) zoomPhase += dt * val('zoomSpeed');
+      if ($('tiltAuto').checked) tiltPhase += dt * val('swaySpeed');
+      if ($('drift').checked)    driftPhase += dt * 0.35;
+
+      // throw physics: when you're not holding it, it coasts and slows down.
+      // Friction 0 means it never stops.
+      if (!dragging) {
+        userPan[0] += panVel[0] * dt;
+        userPan[1] += panVel[1] * dt;
+        const damping = Math.exp(-Math.max(0, val('friction')) * dt);
+        panVel[0] *= damping;
+        panVel[1] *= damping;
+        if (Math.hypot(panVel[0], panVel[1]) < 1e-4) panVel = [0, 0];
+      }
+
+      // rotation: auto spin + manual offset
+      const angle = rotPhase + radians(val('rotAngle'));
+
+      // zoom: base level, optionally pulsing in octaves (2^x feels smoother than linear)
+      const pulsing = $('zoomAuto').checked;
+      const scale = val('zoomLevel') * (pulsing ? Math.pow(2, val('zoomDepth') * Math.sin(zoomPhase)) : 1);
+
+      // tilt: manual sliders + optional sway on top
+      const sway = $('tiltAuto').checked;
+      const rawX = val('tiltX') + (sway ? val('swayAmt') * Math.sin(tiltPhase) : 0);
+      const rawY = val('tiltY') + (sway ? val('swayAmt') * Math.cos(tiltPhase * 0.8) : 0);
+
+      // The horizon shows up once the tilt eats the whole field of view, so we
+      // soft-limit each axis (tanh) to keep it just out of sight. Sliders still
+      // feel smooth, they just ease off near the limit.
+      const aspect = width / height;
+      const halfV = FOV / 2;
+      const halfH = Math.atan(Math.tan(halfV) * aspect);
+      const limX = Math.PI / 2 - halfV - radians(10);
+      const limY = Math.PI / 2 - halfH - radians(10);
+      const tiltX = limX * Math.tanh(radians(rawX) / limX);
+      const tiltY = limY * Math.tanh(radians(rawY) / limY);
+
+      // remember this frame's camera so the pan maths can match it
+      view = { angle, scale, aspect, ax: -tiltX, ay: tiltY };
+
+      background(14, 12, 20);
+
+      shader(sh);
+      sh.setUniform('uTex', tex);
+      sh.setUniform('uAngle', angle);
+      sh.setUniform('uScale', scale);
+      sh.setUniform('uAspect', aspect);
+      sh.setUniform('uF', FOCAL);
+      sh.setUniform('uTilt', [-tiltX, tiltY]);
+      sh.setUniform('uTexAspect', texAspect);
+      sh.setUniform('uPan', [
+        Math.sin(driftPhase) * 0.8 + userPan[0],
+        Math.cos(driftPhase * 0.7) * 0.8 + userPan[1]
+      ]);
+
+      // This plane is just a screen-filling canvas for the shader now.
+      // All the tilting happens per-pixel inside the fragment shader.
+      plane(width, height);
+    }
+  </script>
+</body>
+
+</html>
