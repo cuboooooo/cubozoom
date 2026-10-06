@@ -1,27 +1,22 @@
-<!-- i have since moved to vscode and its on github. -->
-
-
-
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Rotozoom</title>
+  <title>Cubozoom</title>
 
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
 
   <style>
-    /* ---------- tokens ---------- */
     :root {
       --bg: #0e0c14;
       --panel: rgba(20, 16, 32, 0.82);
       --ink: #f2eefb;
       --dim: #a79fbd;
       --line: #3a3150;
-      --hot: #ff3d9a;
+      --hot: #00ffd5;
 
       /* keep stuff clear of phone notches / home bars */
       box-sizing: border-box;
@@ -63,11 +58,27 @@
       width: min(310px, calc(100% - 24px));
       max-height: 70vh;
       overflow-y: auto;
+      scrollbar-width: none;        /* Firefox */
+      -ms-overflow-style: none;     /* old Edge */
       padding: 10px 12px;
       background: var(--panel);
       backdrop-filter: blur(10px);
       border: 1px solid var(--line);
       border-radius: 10px;
+    }
+
+    #panel::-webkit-scrollbar { display: none; }   /* Chrome, Safari */
+
+    /* only shows while there's no real texture loaded */
+    #empty {
+      position: fixed;
+      inset: 0;
+      z-index: 5;
+      display: none;
+      place-items: center;
+      margin: 0;
+      color: var(--dim);
+      pointer-events: none;
     }
 
     #bar {
@@ -193,22 +204,22 @@
 <body>
 
   <!-- shown only while the panel is hidden -->
+  <p id="empty">Drop an image here, or add PNGs to your assets folder.</p>
+
   <button id="show">Show controls</button>
 
   <div id="panel">
     <div id="bar">
-      <label class="btn">Load PNG
+      <label class="btn">Load Image
         <input id="file" type="file" accept="image/png,image/*">
       </label>
-      <button id="reset" class="ghost">Default texture</button>
       <button id="hide" class="ghost">Hide</button>
     </div>
     <select id="preset" aria-label="Preset textures"></select>
     <div class="chk" style="gap:6px; flex-wrap:wrap; margin:6px 0 0">
       <button id="scan" class="ghost">Scan folder…</button>
-      <button id="saveJson" class="ghost">Download assets.json</button>
     </div>
-    <p id="hint">Or drop an image anywhere. Press H to hide or show this panel. Presets load from the assets folder on run; the third value in assets.json sets whether Pixelated gets ticked.</p>
+    <p id="hint">Or drop an image anywhere. Press H to hide or show this panel.</p>
 
     <details open>
       <summary>Rotate</summary>
@@ -330,7 +341,7 @@
     // ------------------------------------------------------------------
     let sh;                  // the shader
     let tex;                 // texture currently in use
-    let defaultTex;          // the built-in one, so we can switch back
+    let placeholderTex;      // blank stand-in until a real texture loads
     let texAspect = 1;       // width / height of the texture
 
     // Each effect has its own phase so toggling one off doesn't make
@@ -355,16 +366,27 @@
     // "Scan folder…" (Chrome/Edge) rebuilds assets.json for you.
     // ------------------------------------------------------------------
     const PRESETS = [
-      // ['Plasma', 'plasma.png', false],
       ['Blackstone', 'blackstone.png', true],
-      ['Cobblestone', 'cobblestone.png', false],
+      ['Cobblestone', 'cobblestone.png', true],
       ['Crying Obsidian', 'crying_obsidian.png', true],
       ['Chiseled Copper', 'chiseled_copper.png', true],
-      ['Blackstone', 'blackstone.png', true],
-      ['Blackstone', 'blackstone.png', true],
-      ['Blackstone', 'blackstone.png', true],
+      ['Barrel', 'barrel_bottom.png', true],
+      ['Blue Wool', 'blue_wool.png', true],
+      ['Bookshelf', 'chiseled_bookshelf_occupied.png', true],
+      ['Planks', 'dark_oak_planks.png', true],
+      ['Diamond Ore', 'diamond_ore.png', true],
+      ['Sculk', 'sculk_catalyst_top.png', true],
+      ['Soul Soil', 'soul_soil.png', true],
+      ['A man', 'a man.png', false],
+      ['do not click', 'do not click.gif', false],
+      ['hexagon', 'hexagon.png', false],
+      ['The OG', 'meanman.png', false],
+      ['Nicolas Fong', 'nicolas-fong599.gif', false],
+      ['snom', 'snom_1024x1024.jpg', false],
+
       
     ];
+    
     const IMG_RE = /\.(png|jpe?g|gif|webp)$/i;
     let presets = [];   // the final merged list
 
@@ -380,38 +402,19 @@
     // Textures
     // ------------------------------------------------------------------
 
-    // Old-school XOR pattern on a checkerboard. Cheap, loud, perfect.
-    function makeDefaultTexture() {
-      const g = createGraphics(256, 256);
-      g.pixelDensity(1);
-      g.loadPixels();
-
-      for (let y = 0; y < 256; y++) {
-        for (let x = 0; x < 256; x++) {
-          const i = 4 * (y * 256 + x);
-          const checker = ((x >> 5) + (y >> 5)) & 1;
-          const xor1 = (x ^ y) & 255;
-          const xor2 = ((x * 2) ^ (y * 2)) & 255;
-
-          let r = checker ? xor1 : 255 - xor1;
-          let gr = xor2 * 0.6;
-          let b = checker ? 255 - xor2 : xor2;
-
-          // thin white line on the top/left so you can see where a tile ends
-          if (x < 2 || y < 2) { r = gr = b = 255; }
-
-          g.pixels[i] = r;
-          g.pixels[i + 1] = gr;
-          g.pixels[i + 2] = b;
-          g.pixels[i + 3] = 255;
-        }
-      }
-      g.updatePixels();
-      return g.get();   // freeze into a plain image so p5 doesn't re-upload it every frame
+    // A single dark pixel, only here so the shader has *something* bound
+    // until the first preset (or your own file) finishes loading.
+    function makePlaceholderTexture() {
+      const img = createImage(1, 1);
+      img.loadPixels();
+      img.pixels.set([14, 12, 20, 255]);
+      img.updatePixels();
+      return img;
     }
 
     function setTexture(t) {
       tex = t;
+      $('empty').style.display = (t === placeholderTex) ? 'grid' : 'none';
       texAspect = t.width / t.height;
       applyFilter();
     }
@@ -474,8 +477,18 @@
 
     function buildPresetMenu() {
       const sel = $('preset');
-      sel.innerHTML = '<option value="">Built-in XOR pattern</option><option value="custom" hidden>Your file</option>';
+      sel.innerHTML = '<option value="custom" hidden>Your file</option>';
       presets.forEach((p, i) => sel.add(new Option(p.name, String(i))));
+      sel.style.display = presets.length ? '' : 'none';   // no presets, no dropdown
+    }
+
+    // Load preset number i (also ticks/unticks Pixelated, per the preset)
+    function loadPreset(i) {
+      const p = presets[i];
+      $('preset').value = String(i);
+      $('pixel').checked = p.pixelated;   // each preset picks its own filtering
+      loadImage(p.url, img => setTexture(img),
+        () => alert('Could not load ' + p.url + '. Is it in your assets folder?'));
     }
 
     // Runs on startup: manifest first, then whatever the folder listing shows.
@@ -503,22 +516,11 @@
       if (presets.length) console.info('Generated assets.json:\n' + presetsToJson());
 
       $('preset').onchange = () => {
-        const v = $('preset').value;
-        if (v === '') { setTexture(defaultTex); return; }
-        if (v === 'custom') return;
-
-        const p = presets[+v];
-        $('pixel').checked = p.pixelated;   // each preset picks its own filtering
-        loadImage(p.url, img => setTexture(img),
-          () => alert('Could not load ' + p.url + '. Is it in your assets folder?'));
+        if ($('preset').value !== 'custom') loadPreset(+$('preset').value);
       };
 
-      $('saveJson').onclick = () => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([presetsToJson()], { type: 'application/json' }));
-        a.download = 'assets.json';
-        a.click();
-      };
+      // the first preset is the default texture
+      if (presets.length) loadPreset(0);
 
       // Browsers can't list a folder on their own, but Chrome/Edge let you pick one.
       if (!window.showDirectoryPicker) $('scan').style.display = 'none';
@@ -554,8 +556,9 @@
         await out.close();
 
         buildPresetMenu();
+        if (presets.length) loadPreset(0);
       } catch (e) {
-        if (e.name !== 'AbortError') alert('Could not scan that folder (' + e.message + '). Try "Download assets.json" instead.');
+        if (e.name !== 'AbortError') alert('Could not scan that folder (' + e.message + ').');
       }
     }
 
@@ -614,9 +617,8 @@
       noStroke();
 
       sh = createShader(VERT, FRAG);
-      defaultTex = makeDefaultTexture();
-      // replace this.
-      setTexture(defaultTex);
+      placeholderTex = makePlaceholderTexture();
+      setTexture(placeholderTex);
 
       // sliders and number boxes stay in sync. You can type ANY number: the
       // slider just pins to its end, but the typed value is what gets used.
@@ -634,7 +636,6 @@
 
       // texture loading: button + drag and drop
       $('file').addEventListener('change', e => loadFile(e.target.files[0]));
-      $('reset').onclick = () => setTexture(defaultTex);
       $('pixel').onchange = applyFilter;
       $('mip').onchange = applyFilter;
       initPresets();
